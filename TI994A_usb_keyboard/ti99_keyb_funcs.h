@@ -69,6 +69,9 @@ static byte TI99Shift = 0x00;
 static byte TI99Cntrl = 0x00;
 static byte TI99Fnct  = 0x00;
 
+//Time in ms since last keyboard scan
+static ulong lastKeyboardScan = 0;
+
 //Initialize the IO pins
 static void Ti99_Init_IO(void)
 {
@@ -202,7 +205,7 @@ static void TI99_Write_Key_Down(TI99KEYCONV *pTI99KeyConv)
 }
 
 
-/* TI99_Write_Key_Down - Write a TI99 keyboard up key
+/* TI99_Write_Key_Up - Write a TI99 keyboard up key
  *
  */
 static void TI99_Write_Key_Up(TI99KEYCONV *pTI99KeyConv)
@@ -273,7 +276,9 @@ static void TI99_Read_Output_Pins(void)
   	// use Falling edge?
 	noInterrupts();
 #endif
-	//Onlu one output pin can be low at a time
+	lastKeyboardScan = 0;
+
+	//Only one output pin can be low at a time
 	if (digitalRead(Teensy_PIN06_P5) == LOW)
 	{
 		TI99_Write_Input_Pins(Row_Pin06_P05);
@@ -342,7 +347,50 @@ static void TI99_Set_Keyboard_Interrupts()
   attachInterrupt(Teensy_PIN15_2Y3, TI99_Read_Output_Pins, interruptMode);
 }
 #endif
- 
+
+
+/* TI99_Background_Kscan
+ *
+ * Some keyboard functions are scanned in an alternative way, like
+ * fctn-= (Quit) and fctn-4 (Break) and maybe some other methods
+ * I don't know about.
+ *
+ * It seems that Quit waits for the key release with the same output
+ * line held low. This will never work properly with the 
+ * TI99_Read_Output_Pins() function because there are no changes in the
+ * output pins anymore and therefore this function never is called again.
+ * The same thing hapens with the Break function if a Basic program
+ * never does any input function like INPUT or CALL KEY (10 goto 10)
+ *
+ * The big idea is to measure the time between calls of the
+ * TI99_Read_Output_Pins() function. If this is more then x ms 
+ * then that function is called anyway so that the last USB keyboard
+ * state is written and can be read by the TI99.
+ */
+static void TI99_Background_Kscan(void)
+{
+	static ulong PrevMillis = 0;
+	ulong CurMillis = millis();
+	ulong PastMillis;
+	
+	if (PrevMillis == 0)
+	{
+		PastMillis = 0;
+	}
+	else
+	{
+		PastMillis = CurMillis - PrevMillis;
+	}
+	PrevMillis = CurMillis;
+	
+	lastKeyboardScan += PastMillis;
+	
+	if (lastKeyboardScan > 500)
+	{
+		TI99_Read_Output_Pins();
+	}
+}
+
 
 /* TI99_Write_Chars - Write TI99 keyboard N Characters
  *

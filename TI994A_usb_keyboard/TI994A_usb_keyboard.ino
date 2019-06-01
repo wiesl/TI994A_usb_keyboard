@@ -9,6 +9,11 @@
  * Teensy 3.1 Arduino Shield Adapter and a Sparkfun USB host
  * shield.
  *
+ * Version:
+ *	1.0 1-3-2018 Initial release
+ *	2.0 3-5-2018 Added TI99_Background_Kscan() for those special
+ *			key scan functions (Quit, Break, ...)
+ *
  * IDE Settings for Teensy:
  *
  * Board     : Teensy 3.2
@@ -656,6 +661,8 @@ void loop()
 #endif
 	}
 	
+	//Alternative keyboard scan
+	TI99_Background_Kscan();
 #if 0
 	Usb.gpioWr(data);
 or ...
