@@ -10,10 +10,13 @@
  * shield.
  *
  * Version:
- *	1.0 1-3-2018 Initial release
- *	2.0 3-5-2018 Added TI99_Background_Kscan() for those special
+ *	1.0 01-03-2018 Initial release
+ *	2.0 03-05-2018 Added TI99_Background_Kscan() for those special
  *			key scan functions (Quit, Break, ...)
- *	2.1 4-9-2018 Fixed PageUp equ fctn-6 and PageDn equ fctn-4
+ *	2.1 04-09-2018 Fixed PageUp equ fctn-6 and PageDn equ fctn-4
+ *	2.2 24-12-2018 Fixed autorepeat problem for converted
+ *			SHIFT [,],\,',/,-,` to {,},|,",?,_,~ after releasing
+ *			shift key before other key.
  *
  * IDE Settings for Teensy:
  *
@@ -261,6 +264,13 @@ static void ConvUsbToTi99(byte key_stat, byte usb_key)
 	}
 	
 	//Convert SHIFT [,],\,',/,-,` to {,},|,",?,_,~
+	if (key_stat == KBKEY_UP) 			//V2.2 bug fix
+	{
+		if ((usb_asc == MK_LSHIFT) || (usb_asc == MK_RSHIFT))
+		{
+			TI99_Clear_Kb_Output_Rows();
+		}
+	}
 	if (UsbLftShift || UsbRgtShift)
 	{
 		switch(usb_asc)
