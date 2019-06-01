@@ -13,6 +13,7 @@
  *	1.0 1-3-2018 Initial release
  *	2.0 3-5-2018 Added TI99_Background_Kscan() for those special
  *			key scan functions (Quit, Break, ...)
+ *	2.1 4-9-2018 Fixed PageUp equ fctn-6 and PageDn equ fctn-4
  *
  * IDE Settings for Teensy:
  *
