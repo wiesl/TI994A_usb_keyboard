@@ -25,19 +25,20 @@
  * Optimize  : Fast
  */
 
-#include <hidboot.h>
-#include <usbhub.h>
+/*
+ * Includes
+ */
+//#define USE_SPI4TEENSY3 0
 
-// Satisfy the IDE, which needs to see the include statment in the ino too.
-#ifdef dobogusinclude
-#include <spi4teensy3.h>
-#endif
-#include <SPI.h>
+#include "TI994A_usb_keyboard.h"
 
 /*
  * DEBUG OPTIONS
  */
-//#define DEBUG_SERIAL			//Serial debugger over USB
+#define DEBUG_SERIAL			//Serial debugger over USB
+
+// Wait for serial to be ready
+#define WAIT_FOR_SERIAL false
 
 #if defined DEBUG_SERIAL
 
@@ -62,15 +63,6 @@
 #ifndef _delay_ms
 #define _delay_ms(n) delay(n)
 #endif
-
-/*
- * TI994A Keyboard includes
- */
-#include "TI994A_usb_keyboard.h"
-#include "usb_conv_table.h"
-#include "ti99_conv_table.h"
-#include "basic_table.h"
-#include "ti99_keyb_funcs.h"
 
 //Some bit manipulation Macro's
 //#define SBO(p)    digitalWrite(p, HIGH)     	//Set Bit One
@@ -98,7 +90,34 @@ static byte KeybMode    = KBSM_UNDEF;	// Keyboard Special Mode
 static byte KeybLeds	= 0x00;		// Keyboard LEDs
 static byte KeybLedsCpy	= 0xFF;		// Keyboard LEds copy
 
+/*
+ * Includes
+ */
+#include <Arduino.h>
+#include <hidboot.h>
+#include <usbhub.h>
+#include "DebugSerial.h"
+#include "DebugSPI.h"
+#include "teensy_reboot_support.h"
+
+// Satisfy the IDE, which needs to see the include statment in the ino too.
+//#ifdef dobogusinclude
+#include <spi4teensy3.h>
+//#endif
+#include <SPI.h>
+
+/*
+ * TI994A Keyboard includes
+ */
+#include "usb_conv_table.h"
+#include "ti99_conv_table.h"
+#include "basic_table.h"
+#include "ti99_keyb_funcs.h"
 #include "ti99_spmod_funcs.h"
+
+#if !defined(CORE_TEENSY)
+#error CORE_TEENSY not set correctly!
+#endif
 
 #if defined DEBUG_USB_TO_TI99
 /* PrintPressedKey - Print pressed key value
@@ -570,53 +589,77 @@ KbdRptParser Prs;
 /*
  * Initialisation
  */
-void setup()
+void GPIOTest()
 {
-	RunningMode = RM_STARTSETUP;
-	
-#if defined DEBUG_SERIAL
- 	Serial.begin( 115200 );
-#if !defined(__MIPSEL__)
-  	while (!Serial); // Wait for serial port to connect - used on Leonardo, Teensy and other boards with built-in USB CDC serial connection
-#endif
-	Serial.println("Start setup");
-#endif
-	
+	DEBUG_PRINTLN("GPIO Test ...");
+	Usb.gpioWr(0);
+	_delay_ms(1000);
+	Usb.gpioWr(0xFF);
+	_delay_ms(1000);
+	Usb.gpioWr(0);
+	DEBUG_PRINTLN("GPIO Test done");
+}
+
+void resetUSBChip()
+{
 	pinMode(MAX_GPX, INPUT);
 	pinMode(MAX_RESET, OUTPUT);
-	
+
 	digitalWrite(MAX_RESET, LOW);
 	_delay_ms(20);
 	digitalWrite(MAX_RESET, HIGH);
 	_delay_ms(20);
+}
 
+void initNonUSB()
+{
 	Ti99_Init_IO();
 	TI99_Clear_Kb_Output_Rows();
 #if defined TI99_KEY_INTERRUPT
 	TI99_Set_Keyboard_Interrupts();
 #endif
-	
-	_delay_ms(500);
+	//_delay_ms(500);
+}
 
-#if defined DEBUG_SERIAL
-	Serial.println("Usb.Init");
-#endif
-	if (Usb.Init() == -1)
+void initUSB()
+{
+	long USBInitTime = millis();
+	const long USBMaxInitTime = 2000;
+
+	DEBUG_PRINTLN("Usb.Init");
+	// Wait for keyboard to be up
+	while (Usb.Init() == -1 && USBInitTime < USBMaxInitTime) USBInitTime = millis();
+
+	if (USBInitTime >= USBMaxInitTime)
 	{
 #if defined DEBUG_MISC
 		Serial.println("OSC did not start.");
 #endif
 	}
-	_delay_ms(200);
+	//_delay_ms(200);
+}
 
-#if defined DEBUG_SERIAL
-	Serial.println("SetReportParser");
-#endif
+/*
+ * Initialisation
+ */
+void setup()
+{
+	RunningMode = RM_STARTSETUP;
+
+	setup_debug_serial();
+
+	DEBUG_PRINTLN("Start setup");
+
+	debug_print_SPI_parameters();
+
+	resetUSBChip();
+	initNonUSB();
+	initUSB();
+
+	DEBUG_PRINTLN("SetReportParser");
 	HidKeyboard.SetReportParser(0, (HIDReportParser*)&Prs);
-
-#if defined DEBUG_SERIAL
-	Serial.println("End setup");
-#endif
+	DEBUG_PRINT("End setup(ms)=");
+	DEBUG_PRINTLN(millis());
 
 	RunningMode = RM_ENDSETUP;
 }
@@ -630,10 +673,37 @@ void loop()
                 KBDLEDS kbdLeds;
                 uint8_t bLeds;
         } kbdLockingKeys;
- 
+
+	static long lastGoodState = 0;
+
+	Usb.Task();
+
+	long loopMillis = millis();
+	uint8_t state = Usb.getUsbTaskState();
+
+	if (state != USB_STATE_RUNNING || !HidKeyboard.isReady())
+	{
+		if ((loopMillis - lastGoodState) >= 5000)
+		{
+			// Keyboard removed
+			DEBUG_PRINT("HidKeyboard.isReady()=false, keyboard removed, millis()=");
+			DEBUG_PRINTLN(millis());
+			DEBUG_PRINTLN("CPU_RESTART");
+			// Delay, to see reboot message on serial port
+			DEBUG_DELAYMS(1000);
+			CPU_RESTART;
+		}
+		// next loop, try again!
+		return;
+	}
+
+	lastGoodState = loopMillis;
+
  	if (RunningMode < RM_ACTIVE)
 	{
 		RunningMode = RM_ACTIVE;
+		DEBUG_PRINT("RunningMode=RM_ACTIVE, millis()=");
+		DEBUG_PRINTLN(millis());
 
 		TI99Capsl = FALSE;
 		TI99Numl  = TRUE;
@@ -650,10 +720,10 @@ void loop()
 		TI99Capsl = kbdLockingKeys.kbdLeds.bmCapsLock == 1;
 		TI99Numl  = kbdLockingKeys.kbdLeds.bmNumLock  == 1;
 #endif
+		DEBUG_PRINT("RunningMode=RM_ACTIVE, done, millis()=");
+		DEBUG_PRINTLN(millis());
 	}
-	
-	Usb.Task();
-	
+
 	//Write LED output to USB Host GIO pins
 	KeybLeds = 0x00;
 	if (TI99Capsl) KeybLeds |= 0x01;
